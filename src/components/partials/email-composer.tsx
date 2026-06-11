@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useForm, type SubmitHandler } from "react-hook-form";
+import { useEffect, useState } from "react";
+import { useForm, useWatch, type SubmitHandler } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import axios from "axios";
@@ -22,7 +22,6 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 
 import { updateAnalytics } from "@/utils/analytics";
-import { cn } from "@/lib/utils";
 
 import {
   SendHorizonal,
@@ -36,51 +35,22 @@ import {
   Redo2,
   Paperclip,
   X,
-  CheckCircle2,
 } from "lucide-react";
 
-const formSchema = z
-  .object({
-    fromName: z.string().min(1, "From Name is required"),
-    fromUser: z.string().min(1, "From user is required"),
-    fromOrg: z.string().min(1, "From org is required"),
-    ext: z.nativeEnum(DomainExtension),
-
-    to: z.string().optional(),
-
-    forwardTo: z.string().optional(),
-
-    replyTo: z.string().email("Invalid email").or(z.literal("")).optional(),
-    cc: z.string().optional(),
-    bcc: z.string().optional(),
-
-    subject: z.string().min(1, "Subject is required"),
-  })
-  .superRefine((values, ctx) => {
-    const isGov = values.ext === DomainExtension.GOV;
-
-    if (isGov) {
-      if (!values.forwardTo || !values.forwardTo.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["forwardTo"],
-          message: "Forward To is required for .gov mode",
-        });
-      }
-    } else {
-      if (!values.to || !values.to.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["to"],
-          message: "To is required",
-        });
-      }
-    }
-  });
+const formSchema = z.object({
+  fromName: z.string().min(1, "From Name is required"),
+  fromUser: z.string().min(1, "From user is required"),
+  fromOrg: z.string().min(1, "From org is required"),
+  ext: z.nativeEnum(DomainExtension),
+  to: z.string().min(1, "To is required"),
+  replyTo: z.string().email("Invalid email").or(z.literal("")).optional(),
+  cc: z.string().optional(),
+  bcc: z.string().optional(),
+  subject: z.string().min(1, "Subject is required"),
+});
 
 type FormValues = z.infer<typeof formSchema>;
 
-/* TOOLBAR BUTTON */
 function ToolbarButton({
   active,
   disabled,
@@ -112,7 +82,6 @@ function ToolbarButton({
   );
 }
 
-/* RICH EDITOR */
 function RichEmailEditor({
   value,
   onChange,
@@ -129,18 +98,16 @@ function RichEmailEditor({
       StarterKit,
       Underline,
       Link.configure({ openOnClick: false }),
-      Placeholder.configure({ placeholder: "Write your email…" }),
+      Placeholder.configure({ placeholder: "Write your email..." }),
     ],
     content: value,
     immediatelyRender: false,
     editable: !disabled,
-
     editorProps: {
       attributes: {
         class: "font-serif text-[16px] leading-[1.6]",
       },
     },
-
     onUpdate({ editor }) {
       onChange(editor.getHTML());
     },
@@ -265,9 +232,6 @@ export default function EmailComposer() {
   >("idle");
   const [html, setHtml] = useState("");
   const [attachments, setAttachments] = useState<File[]>([]);
-  const [forwardStatus, setForwardStatus] = useState<
-    "idle" | "setting" | "set" | "error"
-  >("idle");
   const [editorResetKey, setEditorResetKey] = useState(0);
 
   const form = useForm<FormValues>({
@@ -278,7 +242,6 @@ export default function EmailComposer() {
       fromUser: "",
       fromOrg: "",
       to: "",
-      forwardTo: "",
       replyTo: "",
       cc: "",
       bcc: "",
@@ -286,68 +249,15 @@ export default function EmailComposer() {
     },
   });
 
-  // eslint-disable-next-line react-hooks/incompatible-library
-  const ext = form.watch("ext");
-  const isGovMode = ext === DomainExtension.GOV;
-
-  useEffect(() => {
-    setForwardStatus("idle");
-    form.setValue("forwardTo", "");
-
-    if (ext === DomainExtension.GOV) {
-      form.setValue("cc", "");
-      form.setValue("bcc", "");
-    }
-  }, [ext]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const GOV_FIXED_TO = useMemo(
-    () => process.env.NEXT_PUBLIC_GOV_FIXED_TO || "support@uspto-filings.org",
-    []
-  );
-
-  const govLocked = isGovMode && forwardStatus !== "set";
-
-  const setForwarding = async () => {
-    const forwardTo = (form.getValues("forwardTo") || "").trim();
-    if (!forwardTo) {
-      form.setError("forwardTo", { message: "Forward To is required" });
-      toast.error("Set Forward To first");
-      return;
-    }
-
-    setForwardStatus("setting");
-
-    try {
-      const res = await axios.post("/api/set-forward", { forwardTo });
-
-      if (res?.data?.success) {
-        setForwardStatus("set");
-        toast.success("Forwarding set successfully");
-      } else {
-        setForwardStatus("error");
-        toast.error("Forwarding failed");
-      }
-    } catch (err) {
-      console.error(err);
-      setForwardStatus("error");
-      toast.error("Forwarding failed");
-    }
-  };
-
   const onSubmit: SubmitHandler<FormValues> = async (values) => {
     if (!html || html.replace(/<[^>]+>/g, "").trim().length < 5) {
       toast.error("Email body is too short");
       return;
     }
 
-    if (isGovMode && forwardStatus !== "set") {
-      toast.error("Set Forward To first (gov mode)");
-      return;
-    }
-
     setStatus("sending");
 
-    const toFinal = isGovMode ? GOV_FIXED_TO : (values.to || "").trim();
+    const toFinal = values.to.trim();
     const fromEmail = `${values.fromUser}@${values.fromOrg}.${values.ext}`;
     const ccList = (values.cc || "")
       .split(",")
@@ -364,15 +274,12 @@ export default function EmailComposer() {
     formData.append("fromEmail", fromEmail);
     formData.append("to", toFinal);
 
-    if (isGovMode && (values.forwardTo || "").trim()) {
-      formData.append("forwardTo", (values.forwardTo || "").trim());
+    if (values.replyTo?.trim()) {
+      formData.append("replyTo", values.replyTo.trim());
     }
 
-    if (values.replyTo?.trim())
-      formData.append("replyTo", values.replyTo.trim());
     ccList.forEach((email) => formData.append("cc[]", email));
     bccList.forEach((email) => formData.append("bcc[]", email));
-
     formData.append("subject", values.subject);
 
     const htmlWithFont = `
@@ -391,7 +298,7 @@ export default function EmailComposer() {
       formData.append("attachments", file);
     });
 
-    console.group("📤 EMAIL SEND (FormData)");
+    console.group("EMAIL SEND (FormData)");
     console.log("toFinal:", toFinal);
     console.log("fromEmail:", fromEmail);
     console.log("subject:", values.subject);
@@ -400,7 +307,7 @@ export default function EmailComposer() {
     console.log("replyTo:", values.replyTo);
     console.log(
       "attachments:",
-      attachments.map((f) => f.name)
+      attachments.map((file) => file.name)
     );
     console.groupEnd();
 
@@ -413,8 +320,7 @@ export default function EmailComposer() {
       form.reset();
       setHtml("");
       setAttachments([]);
-      setForwardStatus("idle");
-      setEditorResetKey((k) => k + 1);
+      setEditorResetKey((key) => key + 1);
     } catch (err) {
       console.error(err);
       toast.error("Send failed");
@@ -425,86 +331,16 @@ export default function EmailComposer() {
     setTimeout(() => setStatus("idle"), 1500);
   };
 
-  const subjectValue = form.watch("subject") || "";
+  const subjectValue =
+    useWatch({ control: form.control, name: "subject" }) || "";
 
   return (
     <div className="w-full md:max-w-3xl layout-standard md:section-padding-standard py-6 flex flex-col gap-6">
-      {isGovMode && (
-        <div
-          className={cn(
-            "w-full px-4 py-4 rounded-lg border border-border space-y-3",
-            forwardStatus !== "set" ? "bg-muted/30 shadow-md" : "bg-card"
-          )}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <div className="font-medium md:text-base text-sm">
-              .gov mode requires forwarding setup
-            </div>
-
-            {forwardStatus === "set" ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse" />
-                <span className="text-green-600">Forwarding set</span>
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-              </div>
-            ) : forwardStatus === "setting" ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="h-2.5 w-2.5 rounded-full bg-yellow-500 animate-pulse" />
-                <span className="text-yellow-700">Setting…</span>
-              </div>
-            ) : forwardStatus === "error" ? (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" />
-                <span className="text-red-600">Failed</span>
-              </div>
-            ) : (
-              <div className="flex items-center gap-2 text-sm">
-                <span className="h-2.5 w-2.5 rounded-full bg-gray-400" />
-                <span className="text-muted-foreground">Not set</span>
-              </div>
-            )}
-          </div>
-
-          <div className="grid md:grid-cols-[1fr_auto] gap-3 items-center">
-            <div>
-              <Label className="text-sm font-medium">Forward To</Label>
-              <Input
-                className="mt-2 h-[50px] border-border bg-input"
-                placeholder="client@gmail.com"
-                {...form.register("forwardTo")}
-                disabled={forwardStatus === "setting"}
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                This will configure{" "}
-                <b className="text-primary">support@uspto-filings.org</b>{" "}
-                forwarding in ImprovMX.
-              </p>
-            </div>
-
-            <Button
-              type="button"
-              className="h-12 !rounded-sm mt-2 bg-primary hover:bg-primary-hover !text-primary-foreground"
-              onClick={setForwarding}
-              disabled={forwardStatus === "setting"}
-            >
-              Set Forwarding
-            </Button>
-          </div>
-
-          <div className="pt-2 text-sm">
-            <span className="text-muted-foreground">Send To (fixed): </span>
-            <span className="font-medium">{GOV_FIXED_TO}</span>
-          </div>
-        </div>
-      )}
-
-      {/* MAIN FORM */}
       <div>
         <Label className="text-sm font-medium">From Name</Label>
         <Input
           className="mt-2 h-[50px] border-border bg-input"
           {...form.register("fromName")}
-          disabled={govLocked}
         />
       </div>
 
@@ -514,75 +350,64 @@ export default function EmailComposer() {
           <Input
             className="mt-2 h-[50px] border-border bg-input"
             {...form.register("fromUser")}
-            disabled={govLocked}
           />
           <span>@</span>
           <Input
             className="mt-2 h-[50px] border-border bg-input"
             {...form.register("fromOrg")}
-            disabled={govLocked}
           />
           <span>.</span>
 
-          {/* ext must stay enabled to switch modes */}
           <select
             {...form.register("ext")}
             className="h-[50px] px-2 border rounded-md"
           >
-            {Object.values(DomainExtension).map((e) => (
-              <option key={e} value={e}>
-                {e}
+            {Object.values(DomainExtension).map((extension) => (
+              <option key={extension} value={extension}>
+                {extension}
               </option>
             ))}
           </select>
         </div>
       </div>
 
-      {!isGovMode && (
-        <div>
-          <Label className="text-sm font-medium">To</Label>
-          <Input
-            className="mt-2 h-[50px] border-border bg-input"
-            {...form.register("to")}
-          />
-        </div>
-      )}
+      <div>
+        <Label className="text-sm font-medium">To</Label>
+        <Input
+          className="mt-2 h-[50px] border-border bg-input"
+          {...form.register("to")}
+        />
+      </div>
 
       <div>
         <Label className="text-sm font-medium">Reply To</Label>
         <Input
           className="mt-2 h-[50px] border-border bg-input"
           {...form.register("replyTo")}
-          disabled={govLocked}
         />
       </div>
 
-      {!isGovMode && (
-        <>
-          <div>
-            <Label className="text-sm font-medium">CC</Label>
-            <Input
-              className="mt-2 h-[50px] border-border bg-input"
-              {...form.register("cc")}
-            />
-          </div>
+      <div>
+        <Label className="text-sm font-medium">CC</Label>
+        <Input
+          className="mt-2 h-[50px] border-border bg-input"
+          {...form.register("cc")}
+        />
+      </div>
 
-          <div>
-            <Label className="text-sm font-medium">BCC</Label>
-            <Input
-              className="mt-2 h-[50px] border-border bg-input"
-              {...form.register("bcc")}
-            />
-          </div>
-        </>
-      )}
+      <div>
+        <Label className="text-sm font-medium">BCC</Label>
+        <Input
+          className="mt-2 h-[50px] border-border bg-input"
+          {...form.register("bcc")}
+        />
+      </div>
 
       <div>
         <Label className="text-sm font-medium">Subject</Label>
         <Input
           className="mt-2 h-[50px] border-border bg-input"
           {...form.register("subject")}
-          disabled={govLocked}
         />
         <CharCounter value={subjectValue} limit={150} />
       </div>
@@ -596,7 +421,6 @@ export default function EmailComposer() {
           size="icon"
           className="md:w-[300px] w-full h-12 bg-primary hover:bg-primary-hover !text-primary-foreground"
           onClick={() => document.getElementById("file-input")?.click()}
-          disabled={govLocked}
         >
           <Paperclip className="h-4 w-4" /> File Attachment
         </Button>
@@ -606,30 +430,30 @@ export default function EmailComposer() {
           type="file"
           multiple
           className="hidden"
-          disabled={govLocked}
-          onChange={(e) => {
-            const files = Array.from(e.target.files || []);
+          onChange={(event) => {
+            const files = Array.from(event.target.files || []);
             if (!files.length) return;
 
-            setAttachments((prev) => [...prev, ...files]);
-            e.currentTarget.value = "";
+            setAttachments((current) => [...current, ...files]);
+            event.currentTarget.value = "";
           }}
         />
       </div>
 
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
-          {attachments.map((file, i) => (
+          {attachments.map((file, index) => (
             <div
-              key={i}
+              key={`${file.name}-${index}`}
               className="flex items-center gap-2 px-3 py-1 text-sm border rounded-full bg-muted"
             >
               <span className="max-w-[200px] truncate">{file.name}</span>
               <button
                 type="button"
-                disabled={govLocked}
                 onClick={() =>
-                  setAttachments((prev) => prev.filter((_, idx) => idx !== i))
+                  setAttachments((current) =>
+                    current.filter((_, itemIndex) => itemIndex !== index)
+                  )
                 }
               >
                 <X className="h-3 w-3 text-destructive" />
@@ -642,7 +466,6 @@ export default function EmailComposer() {
       <RichEmailEditor
         value={html}
         onChange={setHtml}
-        disabled={govLocked}
         resetKey={editorResetKey}
       />
 
@@ -652,7 +475,7 @@ export default function EmailComposer() {
         <Button
           className="h-12 !rounded-sm hover:bg-primary-hover"
           onClick={form.handleSubmit(onSubmit)}
-          disabled={status === "sending" || govLocked}
+          disabled={status === "sending"}
         >
           <SendHorizonal className="h-4 w-4" />
           Send Email

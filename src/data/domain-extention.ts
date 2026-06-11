@@ -1,7 +1,6 @@
 export enum DomainExtension {
-  GOV = "gov",
+  GOV = "gơv",
   COM = "com",
   US = "us",
   ORG = "org",
-  GọV = "gọv",
 }

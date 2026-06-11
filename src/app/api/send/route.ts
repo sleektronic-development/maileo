@@ -11,7 +11,6 @@ export async function POST(req: Request) {
     const to = String(formData.get("to") || "");
     const subject = String(formData.get("subject") || "");
     const html = String(formData.get("html") || "");
-    const forwardTo = String(formData.get("forwardTo") || "");
     const replyTo = String(formData.get("replyTo") || "");
 
     const cc = formData.getAll("cc[]").map(String);
@@ -37,7 +36,6 @@ export async function POST(req: Request) {
       );
     }
 
-    // Forward all fields to mailer API
     const payload = new FormData();
 
     payload.append("fromName", fromName);
@@ -45,10 +43,6 @@ export async function POST(req: Request) {
     payload.append("to", to);
     payload.append("subject", subject);
     payload.append("html", html);
-
-    if (forwardTo) {
-      payload.append("forwardTo", forwardTo);
-    }
 
     if (replyTo) {
       payload.append("replyTo", replyTo);
