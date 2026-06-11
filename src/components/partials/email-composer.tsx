@@ -323,7 +323,12 @@ export default function EmailComposer() {
       setEditorResetKey((key) => key + 1);
     } catch (err) {
       console.error(err);
-      toast.error("Send failed");
+      const message =
+        axios.isAxiosError(err) && err.response?.data?.details
+          ? String(err.response.data.details)
+          : "Send failed";
+
+      toast.error(message);
       updateAnalytics("failed");
       setStatus("error");
     }
